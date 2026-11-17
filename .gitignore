@@ -1,0 +1,3 @@
+*.backup*
+*.asar
+.DS_Store
