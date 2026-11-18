@@ -221,12 +221,8 @@ SECTION_HEADER_MENU = '''
             menu.append(new remote.MenuItem({
                 label: '重命名文件夹',
                 click: () => {
-                    const next = window.prompt('文件夹名称', target.name);
-                    if (next && next.trim()) {
-                        target.name = next.trim();
-                        saveCustomSectionState(ctx.state);
-                        this.forceUpdate();
-                    }
+                    codexRenamingSectionId = target.id;
+                    this.forceUpdate();
                 },
             }));
             menu.append(new remote.MenuItem({
@@ -237,6 +233,19 @@ SECTION_HEADER_MENU = '''
                 },
             }));
             menu.popup({ window: remote.getCurrentWindow() });
+        };
+        this.commitSectionRename = (sectionId, value) => {
+            const next = (value || '').trim();
+            codexRenamingSectionId = null;
+            if (next) {
+                const ctx = buildCustomSectionContext(this.props.group);
+                const target = ctx.byId.get(sectionId);
+                if (target && target.name !== next) {
+                    target.name = next;
+                    saveCustomSectionState(ctx.state);
+                }
+            }
+            this.forceUpdate();
         };
         this.showCustomSectionMenu = (event) => {
             const { group } = this.props;
@@ -294,7 +303,7 @@ SECTION_RENDER = '''        const tabs = group.tabs;
                         maxWidth: '100%',
                         overflow: 'hidden',
                         borderRadius: '4px',
-                        fontSize: '11px',
+                        fontSize: '15px',
                         fontWeight: 600,
                         color: 'var(--chrome-top-tab-text, rgba(0,0,0,0.62))',
                         cursor: 'pointer',
@@ -312,47 +321,44 @@ SECTION_RENDER = '''        const tabs = group.tabs;
                     onContextMenu: (event) => this.showSectionMenu(section, event),
                 },
                     react_1.default.createElement('span', null, section.opened === false ? '▸' : '▾'),
-                    react_1.default.createElement('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, section.name),
+                    codexRenamingSectionId === section.id
+                        ? react_1.default.createElement('input', {
+                            key: 'rename_' + section.id,
+                            defaultValue: section.name,
+                            autoFocus: true,
+                            onClick: (event) => event.stopPropagation(),
+                            onKeyDown: (event) => {
+                                if (event.key === 'Enter') {
+                                    this.commitSectionRename(section.id, event.currentTarget.value);
+                                }
+                                else if (event.key === 'Escape') {
+                                    codexRenamingSectionId = null;
+                                    this.forceUpdate();
+                                }
+                                event.stopPropagation();
+                            },
+                            onBlur: (event) => this.commitSectionRename(section.id, event.currentTarget.value),
+                            style: {
+                                flex: '1 1 auto',
+                                minWidth: 0,
+                                fontSize: '15px',
+                                fontWeight: 600,
+                                fontFamily: 'inherit',
+                                color: 'inherit',
+                                background: 'rgba(120,120,120,0.18)',
+                                border: '1px solid rgba(120,120,120,0.45)',
+                                borderRadius: '3px',
+                                padding: '0 3px',
+                                outline: 'none',
+                                WebkitAppRegion: 'no-drag',
+                            },
+                        })
+                        : react_1.default.createElement('span', { style: { flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, section.name),
                     react_1.default.createElement('span', { style: { flex: '0 0 auto', marginLeft: 'auto', opacity: 0.55 } }, '(' + count + ')')));
             }
             if (item.kind === 'ungrouped') {
-                if (item.tabs.length === 0) {
-                    return react_1.default.createElement('div', {
-                        key: 'ungrouped_header',
-                        style: {
-                            padding: '4px 10px',
-                            boxSizing: 'border-box',
-                            width: '100%',
-                            maxWidth: '100%',
-                            overflow: 'hidden',
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            opacity: 0.5,
-                            cursor: 'context-menu',
-                            WebkitAppRegion: 'no-drag',
-                        },
-                        onContextMenu: this.showCustomSectionMenu,
-                    }, '未分组 (0)');
-                }
-                return (react_1.default.createElement('div', {
-                    key: 'ungrouped_header',
-                    style: {
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        padding: '4px 10px',
-                        boxSizing: 'border-box',
-                        width: '100%',
-                        maxWidth: '100%',
-                        overflow: 'hidden',
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        opacity: 0.62,
-                        cursor: 'context-menu',
-                        WebkitAppRegion: 'no-drag',
-                    },
-                    onContextMenu: this.showCustomSectionMenu,
-                }, '未分组 ', react_1.default.createElement('span', { style: { opacity: 0.8 } }, '(' + item.tabs.length + ')')));
+                // 不显示「未分组」标题，直接接后面的 tab 行
+                return null;
             }
             const it = item.tab;
             const tabIndex = flatIndex;
@@ -447,6 +453,32 @@ def recipe_new(text):
             need(body, anchor, 'onClickMore')
             return body.replace(anchor, SECTION_HEADER_MENU + anchor, 1)
         text = edit_module(text, GROUP_MOD, add_render, '小组树渲染')
+
+        # 2b) TabGroupRow 组右键菜单加「新建分组」
+        def add_group_menu(body):
+            return replace_once(body,
+                """            menu.append(addAppItem);
+            menu.append(new MenuItem({ type: 'separator' }));""",
+                """            menu.append(addAppItem);
+            menu.append(new remote.MenuItem({
+                label: '新建分组',
+                click: () => {
+                    const sectionCtx = buildCustomSectionContext(this.props.group);
+                    sectionCtx.createSection(null, false);
+                    this.forceUpdate();
+                },
+            }));
+            menu.append(new remote.MenuItem({
+                label: '新建分组并收入未分组 App',
+                click: () => {
+                    const sectionCtx = buildCustomSectionContext(this.props.group);
+                    sectionCtx.createSection(null, true);
+                    this.forceUpdate();
+                },
+            }));
+            menu.append(new MenuItem({ type: 'separator' }));""",
+                'TabGroupRow addAppItem 锚点')
+        text = edit_module(text, GROUP_MOD, add_group_menu, '组菜单新建分组')
     else:
         report.append("小组引擎: 已存在，跳过")
 

@@ -2,6 +2,8 @@
 // 自定义折叠小组：树形嵌套 / 折叠 / 拖拽 / 右键菜单 / 未分组
 const CUSTOM_SECTION_STORAGE_KEY = 'biscuitCustomSectionsV1';
 const CUSTOM_SECTION_PATCH_VERSION = 'codexCustomSectionsV10';
+// 正在就地重命名的小组 id（null 表示没有）
+let codexRenamingSectionId = null;
 const loadCustomSectionState = () => {
     try {
         const raw = window.localStorage.getItem(CUSTOM_SECTION_STORAGE_KEY);
