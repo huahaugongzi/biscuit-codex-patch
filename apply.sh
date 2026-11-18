@@ -112,6 +112,8 @@ LEGACY_MARK = 'biscuitCustomSectionsV9SortFix'
 SIDE_MOD = './ts/renderer/components/SidebarSeparator.tsx'
 GROUP_MOD = './ts/renderer/components/TabGroupRow.tsx'
 ROW_MOD = './ts/renderer/components/TabRow.tsx'
+WEBVIEW_MOD = './ts/renderer/components/WebView.tsx'
+ADV_MOD = './ts/renderer/components/settings/AdvancedSettings.tsx'
 WIN_MOD = './ts/renderer/components/Window.tsx'
 
 def is_new_layout(text):
@@ -539,6 +541,7 @@ DRAG_WRAP = '''        this.onDragEndTabGroupAndTab = (result) => {
 
 def recipe_new(text):
     engine = (parts / 'sections_engine.js').read_text()
+    MEM_SETTINGS_FN = (parts / 'memory_settings_item.js').read_text()
 
     # 1) 小组引擎插入 TabGroupRow 模块
     def add_engine(body):
@@ -585,6 +588,37 @@ def recipe_new(text):
         text = edit_module(text, GROUP_MOD, add_group_menu, '组菜单新建分组')
     else:
         report.append("小组引擎: 已存在，跳过")
+
+    # 2c) 内存优化程序：WebView 模块插入休眠引擎，并让 webview key 随 epoch 变化
+    if 'codexMemorySaverV1' not in text:
+        mem_engine = (parts / 'memory_saver_engine.js').read_text()
+
+        def add_mem(body):
+            anchor = 'class WebView extends react_1.default.Component {'
+            need(body, anchor, 'WebView 类声明')
+            body = body.replace(anchor, mem_engine + '\n' + anchor, 1)
+            key_anchor = "        const webviewElementKey = source.id + '/' + persistId + '/' + attributes.preload;"
+            return replace_once(body, key_anchor,
+                "        const webviewElementKey = source.id + '/' + persistId + '/' + attributes.preload\n"
+                "            + '/' + selected + '/' + (typeof codexMemEpochOf === 'function' ? codexMemEpochOf(source.id, selected) : 0);",
+                'webview key')
+        text = edit_module(text, WEBVIEW_MOD, add_mem, '内存优化引擎')
+    else:
+        report.append("内存优化引擎: 已存在，跳过")
+
+    # 2d) 设置 → 高级：内存优化器四档
+    if 'codexMemoryListItem' not in text:
+        def add_mem_settings(body):
+            anchor = 'function AdvancedSettings() {'
+            need(body, anchor, 'AdvancedSettings 函数')
+            body = body.replace(anchor, MEM_SETTINGS_FN + anchor, 1)
+            return replace_once(body,
+                'react_1.default.createElement(HardwareAccelerationListItem, null)));',
+                'react_1.default.createElement(HardwareAccelerationListItem, null),\n        react_1.default.createElement(codexMemoryListItem, null)));',
+                'AdvancedSettings 内容')
+        text = edit_module(text, ADV_MOD, add_mem_settings, '内存优化设置')
+    else:
+        report.append("内存优化设置: 已存在，跳过")
 
     # 3) TabRow 右键菜单加「移动到折叠小组」
     if 'codexCacheMenuV1' in text:

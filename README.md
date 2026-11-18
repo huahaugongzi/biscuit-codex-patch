@@ -6,7 +6,9 @@
 
 1. **自定义折叠小组** — 侧栏里可建可嵌套的文件夹（如 `邮箱 → proton.me → 各账号`），支持折叠、右键菜单（新建子文件夹 / 重命名 / 删除 / 把未分组 App 收进来）、以及「移动到折叠小组」菜单项。
 2. **左侧栏中部折叠把手** — 侧栏右缘中点一个窄条按钮，`<` / `>` 一键收起或展开侧栏。
-3. **精简侧栏页脚** — 隐藏「通知」和「赞助」按钮，保留「添加组」。
+3. **内存优化器** — 设置 → 高级里四档（不做 / 最小 / 均衡 / 最大）。均衡=后台闲置 30 分钟卸载，最大=5 分钟；卸载方式是把 webview 重新挂载（partition 不变，登录态与网页数据保留）。当前选中、播放音频、有未读通知的标签页不卸载。也可用「立即释放后台标签」手动触发。
+4. **行菜单：刷新与清缓存** — tab 行右键加强制刷新（忽略缓存）、清理本站缓存并刷新（清 service worker / cachestorage，不删 cookie）。
+5. **精简侧栏页脚** — 隐藏「通知」和「赞助」按钮，保留「添加组」。
 
 数据存放在 Electron 的 `localStorage` 键 `biscuitCustomSectionsV1` 下，**升级不会丢失**；只有注入的代码需要重新打。
 
@@ -48,6 +50,9 @@
 | `TabGroupRow.render()` | 把 `tabs.map(...)` 换成按小组树展开的列表；小组标题行带右键菜单 |
 | `TabRow.showMoreMenu()` | 加「移动到折叠小组」/「移出折叠小组」 |
 | `Window.tsx` | 插 `ToggleSidebarButton`、页脚两个按钮置 `null`、`onDragStart` 记录被拖 tab |
+| `WebView.tsx` | 插入内存优化引擎；webview 的 `key` 追加 epoch，触发闲置卸载 |
+| `settings/AdvancedSettings.tsx` | 插入「内存优化器」四档单选 + 立即释放按钮 |
+| `MainIpcHandlers.ts`（主进程） | 新增 `codex-clear-cache` IPC：硬刷新 / 清本站缓存 |
 
 `TabRow` 与 `TabGroupRow` 属于不同的 webpack 模块，引擎通过 `window.__codexCustomSections` 暴露给 TabRow 使用。
 
@@ -63,6 +68,7 @@
 ## 已知限制
 
 - 小组内的 tab 排序目前靠右键菜单（「移动到折叠小组」会追加到末尾），组内拖动排序未实现。
+- 内存优化「最小」档目前与「不做」等价（只登记活跃时间，不主动抑制定时器）；卸载后重新载入会丢失未提交表单与滚动位置。
 - 每次 Biscuit 升级后都需要重跑 `apply.sh`，因为 `app.asar` 会被整包替换。
 
 ## 免责声明
