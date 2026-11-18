@@ -51,6 +51,7 @@ echo "解包 app.asar ..."
 npx --yes @electron/asar extract "$ASAR" "$WORK/app" >/dev/null
 
 IDX="$WORK/app/js/renderer/index.js"
+MAIN="$WORK/app/js/main/main.js"
 [ -f "$IDX" ] || { echo "app.asar 里没有 js/renderer/index.js，结构可能变了" >&2; exit 1; }
 
 if [ "$MODE" = "--verify" ]; then
@@ -62,13 +63,15 @@ if [ "$MODE" = "--verify" ]; then
 fi
 
 echo "运行 Python 注入器 ..."
-python3 - "$IDX" "$PARTS" "$MODE" <<'PYEOF'
+python3 - "$IDX" "$MAIN" "$PARTS" "$MODE" <<'PYEOF'
 import sys, pathlib
 
 idx_path = pathlib.Path(sys.argv[1])
-parts = pathlib.Path(sys.argv[2])
-mode = sys.argv[3]
+main_path = pathlib.Path(sys.argv[2])
+parts = pathlib.Path(sys.argv[3])
+mode = sys.argv[4]
 src = idx_path.read_text()
+main_src = main_path.read_text() if main_path.is_file() else None
 orig_len = len(src)
 report = []
 
@@ -425,6 +428,75 @@ ROW_MENU_OLD_END = '''                if (owner) {
                 }
             }'''
 
+CACHE_MOD = './ts/main/MainIpcHandlers.ts'
+CACHE_IPC = '''
+    // codexCacheMenuV1: 硬刷新 / 清理本站数据（不删 cookie）
+    electron_1.ipcMain.handle('codex-clear-cache', async (event, persistId, action, origin) => {
+        if (typeof persistId !== 'string' || !persistId) {
+            return false;
+        }
+        const main = getMain();
+        if (!main || event.sender !== main.window.webContents || event.senderFrame !== event.sender.mainFrame) {
+            return false;
+        }
+        const partition = 'persist:' + persistId;
+        const ses = electron_1.session.fromPartition(partition);
+        if (action === 'hardReload' || action === 'clearAndReload') {
+            electron_1.webContents.getAllWebContents().forEach((wc) => {
+                if (!wc.isDestroyed() && wc.session === ses && wc.getType() === 'webview') {
+                    wc.reloadIgnoringCache();
+                }
+            });
+        }
+        if (action === 'clearSite' || action === 'clearAndReload') {
+            await ses.clearCache();
+            await ses.clearStorageData({
+                storages: ['serviceworkers', 'cachestorage', 'shadercache', 'codecache'],
+                origin: typeof origin === 'string' && origin ? origin : undefined,
+            });
+        }
+        return true;
+    });
+'''
+
+ROW_MENU_CACHE = '''
+            // codexCacheMenuV1: 强制刷新 / 清理本站缓存
+            try {
+                const codexCacheTabGroup = (this.props.group || this.props.tabGroup || (function () {
+                    try {
+                        const st = Store_1.default.getState();
+                        const gs = (st.groupList && st.groupList.tabGroups) || [];
+                        return gs.find((it) => it && (it.tabs || []).some((t) => t.id === tab.id)) || gs[0];
+                    }
+                    catch (e) {
+                        return undefined;
+                    }
+                })());
+                const codexCacheUrl = (this.props.tab && this.props.tab.url) || (source && source.url);
+                if (codexCacheTabGroup && codexCacheUrl) {
+                    const codexPersistId = (0, ITabGroup_1.getPersistId)(codexCacheTabGroup, tab);
+                    let codexOrigin;
+                    try {
+                        codexOrigin = new URL(codexCacheUrl).origin;
+                    }
+                    catch (e) {
+                        codexOrigin = undefined;
+                    }
+                    menu.append(new MenuItem({ type: 'separator' }));
+                    menu.append(new MenuItem({
+                        label: '强制刷新（忽略缓存）',
+                        click: () => electron_1.ipcRenderer.invoke('codex-clear-cache', codexPersistId, 'hardReload'),
+                    }));
+                    menu.append(new MenuItem({
+                        label: '清理本站缓存并刷新',
+                        click: () => electron_1.ipcRenderer.invoke('codex-clear-cache', codexPersistId, 'clearAndReload', codexOrigin),
+                    }));
+                }
+            }
+            catch (e) {
+                console.error('codex cache menu failed', e);
+            }'''
+
 DRAG_WRAP = '''        this.onDragEndTabGroupAndTab = (result) => {
             const { source, destination } = result;
             if (!destination) {
@@ -515,17 +587,22 @@ def recipe_new(text):
         report.append("小组引擎: 已存在，跳过")
 
     # 3) TabRow 右键菜单加「移动到折叠小组」
-    if 'codexCustomSectionsV11' not in text:
+    if 'codexCacheMenuV1' in text:
+        report.append("行菜单: 已存在，跳过")
+    else:
         def add_row_menu(body):
+            if 'codexCustomSectionsV11' in body:
+                tail = ROW_MENU.rstrip('\n').split('\n')[-1]
+                return replace_once(body, tail, tail + '\n' + ROW_MENU_CACHE, 'TabRow 缓存菜单锚点')
             if ROW_MENU_OLD_START in body:
                 s = body.index(ROW_MENU_OLD_START)
                 e = body.index(ROW_MENU_OLD_END, s) + len(ROW_MENU_OLD_END)
                 line_start = body.rfind('\n', 0, s) + 1
-                return body[:line_start] + ROW_MENU + body[e:]
-            return replace_once(body, ROW_MENU_ANCHOR, ROW_MENU, 'TabRow deleteItem 锚点')
+                return body[:line_start] + ROW_MENU + '\n' + ROW_MENU_CACHE + body[e:]
+            return replace_once(body, ROW_MENU_ANCHOR, ROW_MENU + '\n' + ROW_MENU_CACHE, 'TabRow deleteItem 锚点')
         text = edit_module(text, ROW_MOD, add_row_menu, '行菜单')
-    else:
-        report.append("行菜单: 已存在，跳过")
+
+
 
     # 4) Window.tsx：折叠把手 + 页脚隐藏 + 拖拽落位
     if 'ToggleSidebarButton' not in text:
@@ -635,7 +712,8 @@ def recipe_legacy(text):
     return text
 
 # ==================== 分流 ====================
-if NEW_MARK in src and 'ToggleSidebarButton' in src and 'codexHideSidebarFooterV1' in src:
+main_done = main_src is None or "ipcMain.handle('codex-clear-cache'" in main_src
+if NEW_MARK in src and 'ToggleSidebarButton' in src and 'codexHideSidebarFooterV1' in src and main_done:
     print("补丁已全部在位，无需重复注入。")
     sys.exit(0)
 
@@ -649,6 +727,17 @@ else:
         sys.exit(0)
     src = recipe_legacy(src)
 
+# 3b) 主进程（main.js）：硬刷新 / 清理本站缓存 IPC
+if main_src is not None:
+    if "ipcMain.handle('codex-clear-cache'" in main_src:
+        report.append("缓存菜单 IPC: 已存在，跳过")
+    else:
+        a = "    electron_1.ipcMain.on('close-window'"
+        if main_src.count(a) != 1:
+            die('main.js 里找不到唯一 close-window 锚点')
+        main_src = main_src.replace(a, CACHE_IPC + a, 1)
+        report.append(f"缓存菜单 IPC: {CACHE_MOD}")
+
 for line in report:
     print("  - " + line)
 
@@ -657,6 +746,8 @@ if mode == "--dry-run":
     sys.exit(0)
 
 idx_path.write_text(src)
+if main_src is not None:
+    main_path.write_text(main_src)
 print(f"\n写入完成: {orig_len} -> {len(src)} 字节")
 PYEOF
 
@@ -667,6 +758,9 @@ fi
 if command -v node >/dev/null 2>&1; then
   echo "语法检查 ..."
   node --check "$IDX" >/dev/null || { echo "语法错误，放弃回包" >&2; exit 1; }
+  if [ -f "$MAIN" ]; then
+    node --check "$MAIN" >/dev/null || { echo "main.js 语法错误，放弃回包" >&2; exit 1; }
+  fi
 fi
 
 if [ -n "$OUT" ]; then
