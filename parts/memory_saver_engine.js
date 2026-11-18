@@ -82,6 +82,15 @@ const codexMemFindTab = (sourceId) => {
     }
     return undefined;
 };
+const codexMemGroups = () => {
+    try {
+        const state = Store_1.default.getState();
+        return (state.groupList && state.groupList.tabGroups) || [];
+    }
+    catch (e) {
+        return [];
+    }
+};
 const codexMemSelectedTabId = () => {
     try {
         return Store_1.default.getState().groupList.selectedTabId;
@@ -94,12 +103,26 @@ const codexMemDiscard = (sourceId) => {
     codexMemEpoch[sourceId] = (codexMemEpoch[sourceId] || 0) + 1;
     codexMemLastActive[sourceId] = Date.now();
 };
+// 该 source 是否正在被查看（父标签选中，或作为子标签被选中）
+const codexMemIsActive = (sourceId) => {
+    if (sourceId === codexMemSelectedTabId()) {
+        return true;
+    }
+    for (let gi = 0; gi < codexMemGroups().length; gi += 1) {
+        const tabs = codexMemGroups()[gi].tabs || [];
+        for (let ti = 0; ti < tabs.length; ti += 1) {
+            if (tabs[ti].selectedChildTabId === sourceId) {
+                return true;
+            }
+        }
+    }
+    return false;
+};
 // 立即释放所有可卸载的后台标签页，返回释放数量
 const codexMemReleaseNow = () => {
-    const selectedTabId = codexMemSelectedTabId();
     let released = 0;
     Object.keys(codexMemLastActive).forEach((sourceId) => {
-        if (sourceId === selectedTabId) {
+        if (codexMemIsActive(sourceId)) {
             return;
         }
         const tab = codexMemFindTab(sourceId);
@@ -117,12 +140,11 @@ const codexMemSweep = () => {
         return 0;
     }
     const timeout = CODEX_MEM_TIMEOUT_MS[mode];
-    const selectedTabId = codexMemSelectedTabId();
     const now = Date.now();
     let released = 0;
     Object.keys(codexMemLastActive).forEach((sourceId) => {
         const lastActive = codexMemLastActive[sourceId];
-        if (!lastActive || sourceId === selectedTabId || now - lastActive < timeout) {
+        if (!lastActive || now - lastActive < timeout || codexMemIsActive(sourceId)) {
             return;
         }
         const tab = codexMemFindTab(sourceId);

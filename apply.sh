@@ -600,7 +600,7 @@ def recipe_new(text):
             key_anchor = "        const webviewElementKey = source.id + '/' + persistId + '/' + attributes.preload;"
             return replace_once(body, key_anchor,
                 "        const webviewElementKey = source.id + '/' + persistId + '/' + attributes.preload\n"
-                "            + '/' + selected + '/' + (typeof codexMemEpochOf === 'function' ? codexMemEpochOf(source.id, selected) : 0);",
+                "            + '/' + (typeof codexMemEpochOf === 'function' ? codexMemEpochOf(source.id, selected) : 0);",
                 'webview key')
         text = edit_module(text, WEBVIEW_MOD, add_mem, '内存优化引擎')
     else:
