@@ -367,25 +367,57 @@ SECTION_RENDER = '''        const tabs = group.tabs;
             return (react_1.default.createElement('div', {
                 key: it.id,
                 style: item.depth > 1 ? { paddingLeft: (item.depth - 1) * 12 + 'px' } : undefined,
-            }, react_1.default.createElement(TabRow_1.default, { tab: it, selectedTabId: selectedTabId, index: tabIndex, sidebar: sidebar, audible: audiable, notificationsSetting: notificationsSetting, ...it })));
+            }, react_1.default.createElement(TabRow_1.default, { tab: it, tabGroup: group, group: group, selectedTabId: selectedTabId, index: tabIndex, sidebar: sidebar, audible: audiable, notificationsSetting: notificationsSetting, ...it })));
         });'''
 
 ROW_MENU = '''            menu.append(deleteItem);
             menu.append(new MenuItem({ type: 'separator' }));
-            // codexCustomSectionsV10: 移动到折叠小组
-            const sectionApi = window.__codexCustomSections;
-            if (sectionApi) {
-                const sectionCtx = sectionApi.buildCustomSectionContext(this.props.group);
-                const sectionRoots = sectionCtx.children(null);
-                if (sectionRoots.length > 0) {
-                    const sectionSubmenu = sectionRoots.map((section) => ({
-                        label: section.name,
-                        click: () => sectionApi.moveTabIntoSection(this.props.group, tab.id, section.id),
-                    }));
-                    menu.append(new MenuItem({ label: '移动到折叠小组', submenu: sectionSubmenu }));
+            // codexCustomSectionsV11: 移动到折叠小组（group 可能没被 props 带进来，先兜底解析）
+            const codexSectionApi = window.__codexCustomSections;
+            if (codexSectionApi) {
+                let codexGroup = this.props.group || this.props.tabGroup;
+                if (!codexGroup) {
+                    try {
+                        const codexState = Store_1.default.getState();
+                        const codexGroups = (codexState.groupList && codexState.groupList.tabGroups) || [];
+                        codexGroup = codexGroups.find((it) => it && (it.tabs || []).some((t) => t.id === tab.id)) || codexGroups[0];
+                    }
+                    catch (e) {
+                        codexGroup = undefined;
+                    }
                 }
-                const owner = sectionCtx.sections.find((section) => (section.tabIds || []).indexOf(tab.id) !== -1);
-                if (owner) {
+                try {
+                    if (codexGroup) {
+                        const sectionCtx = codexSectionApi.buildCustomSectionContext(codexGroup);
+                        const sectionRoots = sectionCtx.children(null);
+                        if (sectionRoots.length > 0) {
+                            const sectionSubmenu = sectionRoots.map((section) => ({
+                                label: section.name,
+                                click: () => codexSectionApi.moveTabIntoSection(codexGroup, tab.id, section.id),
+                            }));
+                            menu.append(new MenuItem({ label: '移动到折叠小组', submenu: sectionSubmenu }));
+                        }
+                        const owner = sectionCtx.sections.find((section) => (section.tabIds || []).indexOf(tab.id) !== -1);
+                        if (owner) {
+                            menu.append(new MenuItem({
+                                label: '移出折叠小组',
+                                click: () => codexSectionApi.moveTabIntoSection(codexGroup, tab.id, null),
+                            }));
+                        }
+                    }
+                }
+                catch (e) {
+                    console.error('codexCustomSections row menu failed', e);
+                }
+            }'''
+
+ROW_MENU_ANCHOR = '''            menu.append(deleteItem);
+            menu.append(new MenuItem({ type: 'separator' }));'''
+
+# 旧版（V10）注入块，升级时整段替换，避免重复插入
+ROW_MENU_OLD_START = '''            // codexCustomSectionsV10: 移动到折叠小组
+            const sectionApi = window.__codexCustomSections;'''
+ROW_MENU_OLD_END = '''                if (owner) {
                     menu.append(new MenuItem({
                         label: '移出折叠小组',
                         click: () => sectionApi.moveTabIntoSection(this.props.group, tab.id, null),
@@ -483,10 +515,14 @@ def recipe_new(text):
         report.append("小组引擎: 已存在，跳过")
 
     # 3) TabRow 右键菜单加「移动到折叠小组」
-    if 'codexCustomSectionsV10: 移动到折叠小组' not in text:
+    if 'codexCustomSectionsV11' not in text:
         def add_row_menu(body):
-            return replace_once(body, ROW_MENU.split('\n')[0] + '\n' + ROW_MENU.split('\n')[1],
-                                ROW_MENU, 'TabRow deleteItem 锚点')
+            if ROW_MENU_OLD_START in body:
+                s = body.index(ROW_MENU_OLD_START)
+                e = body.index(ROW_MENU_OLD_END, s) + len(ROW_MENU_OLD_END)
+                line_start = body.rfind('\n', 0, s) + 1
+                return body[:line_start] + ROW_MENU + body[e:]
+            return replace_once(body, ROW_MENU_ANCHOR, ROW_MENU, 'TabRow deleteItem 锚点')
         text = edit_module(text, ROW_MOD, add_row_menu, '行菜单')
     else:
         report.append("行菜单: 已存在，跳过")
