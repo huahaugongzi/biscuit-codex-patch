@@ -504,8 +504,9 @@ DRAG_WRAP = '''        this.onDragEndTabGroupAndTab = (result) => {
             if (!destination) {
                 return;
             }
-            // codexCustomSectionsV10: TAB_GROUP 拖到某一行时按小组树落位
-            if (result.type === 'TAB_GROUP' && destination.droppableId.indexOf('group_') !== 0) {
+            // codexCustomSectionsV12: 只有 TAB 拖到分组列表(组内行)时才按小组树落位；
+            // TAB_GROUP 是分组自身在排序，必须交给 createMoveGroupAction。
+            if (result.type === 'TAB' && destination.droppableId === 'tabGroup') {
                 const dropTabId = destination.draggableId;
                 const group = this.props.tabGroups.find((it) => it.tabs.some((tab) => tab.id === dropTabId));
                 const draggedTabId = this.draggedCustomTabId;
@@ -669,7 +670,8 @@ def recipe_new(text):
     else:
         report.append("页脚隐藏: 已存在，跳过")
 
-    if 'codexCustomSectionsV10: TAB_GROUP 拖到某一行' not in text:
+    # V12：分组排序曾被旧分支吞掉，已打过旧版的包需要原地替换
+    if 'codexCustomSectionsV12: 只有 TAB 拖到分组列表' not in text:
         def add_drag(body):
             start = need(body, '        this.onDragEndTabGroupAndTab = (result) => {', 'onDragEndTabGroupAndTab')
             end = body.index('        this.onDragEndChildTab = (result) => {', start)
@@ -677,6 +679,8 @@ def recipe_new(text):
         text = edit_module(text, WIN_MOD, add_drag, '拖拽落位')
 
         def add_drag_start(body):
+            if 'onDragStart: this.onDragStartTab, onDragEnd: this.onDragEndTabGroupAndTab' in body:
+                return body
             return replace_once(body,
                 'react_1.default.createElement(react_beautiful_dnd_1.DragDropContext, { onDragEnd: this.onDragEndTabGroupAndTab },',
                 'react_1.default.createElement(react_beautiful_dnd_1.DragDropContext, { onDragStart: this.onDragStartTab, onDragEnd: this.onDragEndTabGroupAndTab },',
@@ -747,7 +751,7 @@ def recipe_legacy(text):
 
 # ==================== 分流 ====================
 main_done = main_src is None or "ipcMain.handle('codex-clear-cache'" in main_src
-if NEW_MARK in src and 'ToggleSidebarButton' in src and 'codexHideSidebarFooterV1' in src and main_done:
+if NEW_MARK in src and 'ToggleSidebarButton' in src and 'codexHideSidebarFooterV1' in src and main_done and 'codexCustomSectionsV12: 只有 TAB 拖到分组列表' in src:
     print("补丁已全部在位，无需重复注入。")
     sys.exit(0)
 
