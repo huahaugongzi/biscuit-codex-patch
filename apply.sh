@@ -23,7 +23,13 @@ set -euo pipefail
 APP="${1:-}"
 MODE="${2:-apply}"
 OUT="${3:-}"
-PARTS="$HOME/.biscuit-patch/parts"
+# 素材目录：优先用脚本同级的 parts/（仓库可直接用），否则退回 ~/.biscuit-patch/parts
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -d "$SELF_DIR/parts" ]; then
+  PARTS="$SELF_DIR/parts"
+else
+  PARTS="$HOME/.biscuit-patch/parts"
+fi
 
 if [ -z "$APP" ]; then
   echo "用法: $0 /Applications/Biscuit.app [--dry-run|--verify|--out 输出路径]" >&2
@@ -114,6 +120,7 @@ GROUP_MOD = './ts/renderer/components/TabGroupRow.tsx'
 ROW_MOD = './ts/renderer/components/TabRow.tsx'
 WEBVIEW_MOD = './ts/renderer/components/WebView.tsx'
 ADV_MOD = './ts/renderer/components/settings/AdvancedSettings.tsx'
+EXT_MOD = './ts/renderer/components/settings/ExtensionSettings.tsx'
 WIN_MOD = './ts/renderer/components/Window.tsx'
 
 def is_new_layout(text):
@@ -621,6 +628,21 @@ def recipe_new(text):
     else:
         report.append("内存优化设置: 已存在，跳过")
 
+    # 2e) 设置 → 扩展：已解压扩展的安装 / 移除
+    if 'codexExtensionListItem' not in text:
+        EXT_SETTINGS_FN = (parts / 'extension_settings_item.js').read_text()
+
+        def add_ext_settings(body):
+            anchor = 'function ExtensionSettings(props) {'
+            need(body, anchor, 'ExtensionSettings 函数')
+            # 在原 settingGroup 的 div 里追加一个兄弟子元素，不需要改任何括号
+            host = 'react_1.default.createElement("div", { className: classes.settingGroup },'
+            replace_once(body, host, host + '\n        react_1.default.createElement(codexExtensionListItem, null),', 'ExtensionSettings 内容')
+            return body.replace(anchor, EXT_SETTINGS_FN + '\n' + anchor, 1)
+        text = edit_module(text, EXT_MOD, add_ext_settings, '扩展设置')
+    else:
+        report.append("扩展设置: 已存在，跳过")
+
     # 3) TabRow 右键菜单加「移动到折叠小组」
     if 'codexCacheMenuV1' in text:
         report.append("行菜单: 已存在，跳过")
@@ -750,8 +772,12 @@ def recipe_legacy(text):
     return text
 
 # ==================== 分流 ====================
-main_done = main_src is None or "ipcMain.handle('codex-clear-cache'" in main_src
-if NEW_MARK in src and 'ToggleSidebarButton' in src and 'codexHideSidebarFooterV1' in src and main_done and 'codexCustomSectionsV12: 只有 TAB 拖到分组列表' in src:
+main_done = (main_src is None
+             or ("ipcMain.handle('codex-clear-cache'" in main_src
+                 and 'codexExtensionsV1: 扩展加载器' in main_src))
+if (NEW_MARK in src and 'ToggleSidebarButton' in src and 'codexHideSidebarFooterV1' in src
+        and main_done and 'codexCustomSectionsV12: 只有 TAB 拖到分组列表' in src
+        and 'codexExtensionListItem' in src):
     print("补丁已全部在位，无需重复注入。")
     sys.exit(0)
 
@@ -775,6 +801,17 @@ if main_src is not None:
             die('main.js 里找不到唯一 close-window 锚点')
         main_src = main_src.replace(a, CACHE_IPC + a, 1)
         report.append(f"缓存菜单 IPC: {CACHE_MOD}")
+
+# 3c) 主进程：扩展加载器
+if main_src is not None and 'codexExtensionsV1: 扩展加载器' not in main_src:
+    EXT_LOADER = (parts / 'extension_loader_main.js').read_text()
+    a = "    electron_1.ipcMain.on('close-window'"
+    if main_src.count(a) != 1:
+        die('main.js 里找不到唯一 close-window 锚点（扩展加载器）')
+    main_src = main_src.replace(a, EXT_LOADER + a, 1)
+    report.append("扩展加载器: main.js")
+elif main_src is not None:
+    report.append("扩展加载器: 已存在，跳过")
 
 for line in report:
     print("  - " + line)

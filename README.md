@@ -9,10 +9,21 @@
 3. **内存优化器** — 设置 → 高级里四档（不做 / 最小 / 均衡 / 最大）。均衡=后台闲置 30 分钟卸载，最大=5 分钟；卸载方式是把 webview 重新挂载（partition 不变，登录态与网页数据保留）。当前选中、播放音频、有未读通知的标签页不卸载。也可用「立即释放后台标签」手动触发。
 4. **行菜单：刷新与清缓存** — tab 行右键加强制刷新（忽略缓存）、清理本站缓存并刷新（清 service worker / cachestorage，不删 cookie）。
 5. **精简侧栏页脚** — 隐藏「通知」和「赞助」按钮，保留「添加组」。
+6. **扩展加载器** — 设置 → 扩展：选择已解压的 Chrome 扩展目录即可加载（MV3 内容脚本类；界面按钮与部分 API 不可用）。每个 webview 会话（含 `persist:` 分区）启动时自动挂载，列表存在 `userData/codex-extensions.json`。
 
 数据存放在 Electron 的 `localStorage` 键 `biscuitCustomSectionsV1` 下，**升级不会丢失**；只有注入的代码需要重新打。
 
 ## 用法
+
+**升级后一键恢复：**
+
+```bash
+./update.sh                    # 退出 Biscuit → 打补丁 → 重打扩展补丁 → 重新打开
+./update.sh --check            # 只看当前补丁状态
+./update.sh /Applications/xxx.app
+```
+
+单独用 `apply.sh`：
 
 ```bash
 ./apply.sh /Applications/Biscuit.app            # 直接打补丁
