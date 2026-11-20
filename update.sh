@@ -89,29 +89,80 @@ fi
 # --- 2) 生成并写入 app.asar --------------------------------------------
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/biscuit-update.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
-OUT_ASAR="$TMP/app.asar"
+# 用独立文件名，避免 Finder 复制时与已有的 app.asar 同名互相覆盖
+OUT_ASAR="$TMP/app.asar.codexnew"
 
 say "打补丁 ..."
 "$SELF_DIR/apply.sh" "$APP" --out "$OUT_ASAR"
+
+RES="$APP/Contents/Resources"
+
+# Finder 改名（带重试）。Finder 的 Applescript 偶尔返回错误但动作已生效，
+# 所以每一步都以后续的 ls 结果为准，不信任返回值。
+finder_rename() {
+  local from="$1" to="$2"
+  for _ in 1 2 3; do
+    [ -e "$RES/$from" ] || return 0
+    /usr/bin/osascript >/dev/null 2>&1 <<EOF || true
+tell application "Finder"
+  set res to (POSIX file "$RES") as alias
+  set name of (item "$from" of res) to "$to"
+end tell
+EOF
+    [ -e "$RES/$from" ] || return 0
+    sleep 0.3
+  done
+  echo "  改名失败: $from -> $to" >&2
+  return 1
+}
+
+# Finder 复制 OUT_ASAR 进 Resources，返回落地的文件名
+finder_copy_in() {
+  local new=""
+  /usr/bin/osascript >/dev/null 2>&1 <<EOF || true
+tell application "Finder"
+  set res to (POSIX file "$RES") as alias
+  duplicate (POSIX file "$OUT_ASAR" as alias) to res with replacing
+end tell
+EOF
+  # Finder 可能落到 app.asar.codexnew，重名时变成 "app.asar.codexnew 2"，逐个比对内容
+  for f in "$RES"/app.asar.codexnew*; do
+    [ -f "$f" ] || continue
+    if cmp -s "$OUT_ASAR" "$f"; then new=$(basename "$f"); break; fi
+  done
+  [ -n "$new" ] && printf '%s' "$new"
+}
 
 say "写入应用目录 ..."
 if cp "$OUT_ASAR" "$ASAR" 2>/dev/null; then
   echo "  直接写入成功"
 else
   echo "  直接写入被系统拒绝，改用 Finder 复制 ..."
-  # Finder 不受「App 管理」限制：先复制成 app.asar.new，再删旧包改名
-  /usr/bin/osascript <<EOF || { echo "Finder 写入失败" >&2; exit 1; }
-tell application "Finder"
-  set src to POSIX file "$OUT_ASAR" as alias
-  set dstFolder to POSIX file "$APP/Contents/Resources" as alias
-  set tmpItem to (duplicate src to dstFolder with replacing)
-  set name of tmpItem to "app.asar.new"
-  delete (item "app.asar" of dstFolder)
-  set name of tmpItem to "app.asar"
-end tell
-EOF
-  cmp -s "$OUT_ASAR" "$ASAR" || { echo "写入失败：内容不一致" >&2; exit 1; }
-  echo "  Finder 写入成功"
+
+  # 先清掉上次残留的临时包，避免混淆（删不掉就换个名字）
+  for f in "$RES"/app.asar.codexnew "$RES"/app.asar.codexprev; do
+    [ -e "$f" ] || continue
+    finder_rename "$(basename "$f")" "app.asar.stale.$(date +%s)" || true
+  done
+
+  NEWNAME=$(finder_copy_in) || true
+  [ -n "$NEWNAME" ] || { echo "Finder 复制失败，app.asar 未被改动" >&2; exit 1; }
+  cmp -s "$OUT_ASAR" "$RES/$NEWNAME" || { echo "复制内容不一致，放弃替换" >&2; exit 1; }
+
+  if [ -e "$ASAR" ]; then
+    finder_rename "app.asar" "app.asar.codexprev" || true
+  fi
+  finder_rename "$NEWNAME" "app.asar" || {
+    # 兜底：无论如何把 app.asar 弄回来，宁可回退旧包也不能没有
+    [ -e "$ASAR" ] || finder_rename "app.asar.codexprev" "app.asar" || true
+    echo "替换失败，已回退" >&2; exit 1
+  }
+  cmp -s "$OUT_ASAR" "$ASAR" || {
+    finder_rename "app.asar" "app.asar.bad" >/dev/null 2>&1 || true
+    finder_rename "app.asar.codexprev" "app.asar" >/dev/null 2>&1 || true
+    echo "写入内容不一致，已回退" >&2; exit 1
+  }
+  echo "  Finder 写入成功（旧包留在 app.asar.codexprev，可手动删除）"
 fi
 
 # --- 3) 扩展副本的两处改动 --------------------------------------------
