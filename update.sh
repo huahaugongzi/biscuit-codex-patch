@@ -51,7 +51,7 @@ if [ "$CHECK_ONLY" = "1" ]; then
   npx --yes @electron/asar extract "$ASAR" "$TMP/app" >/dev/null
   IDX="$TMP/app/js/renderer/index.js"
   echo "补丁状态:"
-  for k in codexCustomSections codexExtensionsV1 codexHideSidebarFooterV1 ToggleSidebarButton; do
+  for k in codexCustomSections codexCustomSectionsV13 codexExtensionsV1 codexHideSidebarFooterV1 ToggleSidebarButton; do
     printf '  %-28s %s 处\n' "$k" "$(grep -c "$k" "$IDX" 2>/dev/null || echo 0)"
   done
   if [ -n "$EXT_DIR" ]; then
