@@ -245,33 +245,46 @@ const buildSectionFlatList = (group) => {
     ungrouped.forEach((tab) => flat.push({ kind: 'tab', tab, depth: hasSections ? 1 : 0, section: null }));
     return { ctx, flat };
 };
-// 拖拽落位：把 draggedTabId 放到 flat 序号 index 处（index 指整块列表）
+// 拖拽落位：index 是拖拽框架里的行序号（只数 tab 行，不含小组标题），
+// 表示“插到这一行之前”；等于行数时追加到末尾。
 const moveTabToFlatIndex = (group, draggedTabId, index) => {
     const ctx = buildCustomSectionContext(group);
-    const before = buildSectionFlatList(group);
-    const dest = before.flat[index];
-    if (!dest) {
+    if (ctx.children(null).length === 0) {
+        // 没有小组时不接管排序，交给原本的 move action
         return false;
     }
-    const destSection = dest.kind === 'tab' ? dest.section : dest.kind === 'section' ? dest.section : null;
+    const rows = buildSectionFlatList(group).flat.filter((item) => item.kind === 'tab');
+    const at = rows[index];
+    const destSection = at ? at.section : (rows.length ? rows[rows.length - 1].section : null);
     ctx.sections.forEach((section) => {
         section.tabIds = (section.tabIds || []).filter((id) => id !== draggedTabId);
     });
     if (destSection) {
         const ids = destSection.tabIds || (destSection.tabIds = []);
-        let at = ids.length;
-        if (dest.kind === 'tab' && dest.section === destSection) {
-            const found = ids.indexOf(dest.tab.id);
-            at = found < 0 ? ids.length : found;
+        if (at) {
+            const found = ids.indexOf(at.tab.id);
+            ids.splice(found < 0 ? ids.length : found, 0, draggedTabId);
         }
-        ids.splice(at, 0, draggedTabId);
+        else {
+            ids.push(draggedTabId);
+        }
         ctx.openAncestors(destSection);
     }
     saveCustomSectionState(ctx.state);
     return true;
 };
+// 找到拖拽序号对应的目标：小组、插入锚点 tab（null 表示追加）
+const resolveFlatDropTarget = (group, index) => {
+    const rows = buildSectionFlatList(group).flat.filter((item) => item.kind === 'tab');
+    const at = rows[index];
+    if (at) {
+        return { sectionId: at.section ? at.section.id : null, beforeTabId: at.tab.id };
+    }
+    const last = rows.length ? rows[rows.length - 1] : null;
+    return { sectionId: last && last.section ? last.section.id : null, beforeTabId: null };
+};
 // 放到小组标题 / 右键菜单：进该小组末尾；sectionId 为 null 表示移出
-const moveTabIntoSection = (group, draggedTabId, sectionId) => {
+const moveTabIntoSection = (group, draggedTabId, sectionId, beforeTabId) => {
     const ctx = buildCustomSectionContext(group);
     ctx.sections.forEach((section) => {
         section.tabIds = (section.tabIds || []).filter((id) => id !== draggedTabId);
@@ -279,7 +292,15 @@ const moveTabIntoSection = (group, draggedTabId, sectionId) => {
     if (sectionId) {
         const target = ctx.byId.get(sectionId);
         if (target) {
-            ctx.addToSection(target, draggedTabId);
+            const ids = target.tabIds || (target.tabIds = []);
+            const found = beforeTabId ? ids.indexOf(beforeTabId) : -1;
+            if (found < 0) {
+                ids.push(draggedTabId);
+            }
+            else {
+                ids.splice(found, 0, draggedTabId);
+            }
+            ctx.openAncestors(target);
         }
     }
     saveCustomSectionState(ctx.state);
@@ -289,6 +310,7 @@ const moveTabIntoSection = (group, draggedTabId, sectionId) => {
 window.__codexCustomSections = {
     buildCustomSectionContext,
     buildSectionFlatList,
+    resolveFlatDropTarget,
     moveTabToFlatIndex,
     moveTabIntoSection,
     saveCustomSectionState,

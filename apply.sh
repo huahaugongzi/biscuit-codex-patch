@@ -508,17 +508,19 @@ ROW_MENU_CACHE = '''
 
 DRAG_WRAP = '''        this.onDragEndTabGroupAndTab = (result) => {
             const { source, destination } = result;
+            const codexApi = window.__codexCustomSections;
             if (!destination) {
+                this.draggedCustomTabId = null;
                 return;
             }
-            // codexCustomSectionsV12: 只有 TAB 拖到分组列表(组内行)时才按小组树落位；
+            // codexCustomSectionsV13: 只有 TAB 拖到分组列表(组内行)时才按小组树落位；
             // TAB_GROUP 是分组自身在排序，必须交给 createMoveGroupAction。
             if (result.type === 'TAB' && destination.droppableId === 'tabGroup') {
                 const dropTabId = destination.draggableId;
                 const group = this.props.tabGroups.find((it) => it.tabs.some((tab) => tab.id === dropTabId));
                 const draggedTabId = this.draggedCustomTabId;
                 if (group && draggedTabId) {
-                    if (window.__codexCustomSections && window.__codexCustomSections.moveTabToFlatIndex(group, draggedTabId, destination.index)) {
+                    if (codexApi && codexApi.moveTabToFlatIndex(group, draggedTabId, destination.index)) {
                         this.draggedCustomTabId = null;
                         this.forceUpdate();
                     }
@@ -527,6 +529,7 @@ DRAG_WRAP = '''        this.onDragEndTabGroupAndTab = (result) => {
             }
             if (source.droppableId === destination.droppableId
                 && source.index === destination.index) {
+                this.draggedCustomTabId = null;
                 return;
             }
             if (result.type === 'TAB_GROUP') {
@@ -535,13 +538,37 @@ DRAG_WRAP = '''        this.onDragEndTabGroupAndTab = (result) => {
             else if (result.type === 'TAB') {
                 const group = this.props.tabGroups.find((it) => it.id === destination.droppableId);
                 const draggedTabId = this.draggedCustomTabId;
-                if (group && draggedTabId && window.__codexCustomSections && window.__codexCustomSections.moveTabToFlatIndex(group, draggedTabId, destination.index)) {
-                    this.draggedCustomTabId = null;
-                    this.forceUpdate();
-                    return;
+                if (group && draggedTabId) {
+                    const belongs = group.tabs.some((tab) => tab.id === draggedTabId);
+                    if (!belongs) {
+                        // codexCustomSectionsV13: 跨分组拖动。先让原生 move action 把 tab 换到目标组，
+                        // 再把落点位置记进目标组的小组树；否则 tab 会被留在原组。
+                        let dropTarget = null;
+                        try {
+                            if (codexApi) {
+                                dropTarget = codexApi.resolveFlatDropTarget(group, destination.index);
+                            }
+                        }
+                        catch (e) {
+                            dropTarget = null;
+                        }
+                        Store_1.default.dispatch((0, GroupActionCreators_1.createMoveTabAction)(source.droppableId, source.index, destination.droppableId, destination.index, Store_1.default));
+                        if (codexApi && dropTarget && dropTarget.sectionId) {
+                            codexApi.moveTabIntoSection(group, draggedTabId, dropTarget.sectionId, dropTarget.beforeTabId);
+                        }
+                        this.draggedCustomTabId = null;
+                        this.forceUpdate();
+                        return;
+                    }
+                    if (codexApi && codexApi.moveTabToFlatIndex(group, draggedTabId, destination.index)) {
+                        this.draggedCustomTabId = null;
+                        this.forceUpdate();
+                        return;
+                    }
                 }
                 Store_1.default.dispatch((0, GroupActionCreators_1.createMoveTabAction)(source.droppableId, source.index, destination.droppableId, destination.index, Store_1.default));
             }
+            this.draggedCustomTabId = null;
         };
         this.onDragStartTab = (start) => {
             this.draggedCustomTabId = start && start.draggableId ? start.draggableId : null;
@@ -595,7 +622,13 @@ def recipe_new(text):
                 'TabGroupRow addAppItem 锚点')
         text = edit_module(text, GROUP_MOD, add_group_menu, '组菜单新建分组')
     else:
-        report.append("小组引擎: 已存在，跳过")
+        # 已打过旧版引擎：整段替换成本次脚本里的版本（V13 跨组拖拽）
+        def swap_engine(body):
+            start = need(body, '//#region codexCustomSectionsV10', '小组引擎起始')
+            tail = '//#endregion codexCustomSectionsV10'
+            end = body.index(tail, start) + len(tail)
+            return body[:start] + engine.rstrip('\n') + body[end:]
+        text = edit_module(text, GROUP_MOD, swap_engine, '小组引擎升级')
 
     # 2c) 内存优化程序：WebView 模块插入休眠引擎，并让 webview key 随 epoch 变化
     if 'codexMemorySaverV1' not in text:
@@ -692,8 +725,8 @@ def recipe_new(text):
     else:
         report.append("页脚隐藏: 已存在，跳过")
 
-    # V12：分组排序曾被旧分支吞掉，已打过旧版的包需要原地替换
-    if 'codexCustomSectionsV12: 只有 TAB 拖到分组列表' not in text:
+    # V12/V13：分组排序曾被旧分支吞掉，跨组拖拽也被告成了组内排序——已打过旧版的包原地替换
+    if 'codexCustomSectionsV13: 只有 TAB 拖到分组列表' not in text:
         def add_drag(body):
             start = need(body, '        this.onDragEndTabGroupAndTab = (result) => {', 'onDragEndTabGroupAndTab')
             end = body.index('        this.onDragEndChildTab = (result) => {', start)
@@ -776,7 +809,7 @@ main_done = (main_src is None
              or ("ipcMain.handle('codex-clear-cache'" in main_src
                  and 'codexExtensionsV1: 扩展加载器' in main_src))
 if (NEW_MARK in src and 'ToggleSidebarButton' in src and 'codexHideSidebarFooterV1' in src
-        and main_done and 'codexCustomSectionsV12: 只有 TAB 拖到分组列表' in src
+        and main_done and 'codexCustomSectionsV13: 只有 TAB 拖到分组列表' in src
         and 'codexExtensionListItem' in src):
     print("补丁已全部在位，无需重复注入。")
     sys.exit(0)
